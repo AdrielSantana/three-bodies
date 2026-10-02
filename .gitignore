@@ -1,4 +1,4 @@
-# Binário e programa de GPU gerados por `bend main.bend -o tres`
+# Binary and GPU program built by `bend main.bend -o tres`
 /tres
 /tres.gpu
 /tres.c
