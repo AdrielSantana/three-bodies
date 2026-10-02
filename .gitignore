@@ -1,0 +1,6 @@
+# Binário e programa de GPU gerados por `bend main.bend -o tres`
+/tres
+/tres.gpu
+/tres.c
+
+.DS_Store
