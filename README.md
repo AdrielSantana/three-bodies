@@ -138,7 +138,7 @@ There are no tactics or approximations in the proof: the checker runs all 352 st
 bend PHYSICS.bend --check-only
 ```
 
-**Status:** the first full check started on October 2, 2026, and is still running. This section will be updated with the result.
+**Status:** checked. With Bend 2.0.34 on an Apple M5, `bend PHYSICS.bend --check-only` printed `ALL PROOFS CHECK` on October 2, 2026, after 2 h 58 min. That is Bend's regular checker; the recheck with its Lean-built kernel (`--verdict`) has not been run yet.
 
 ### What is not proven
 

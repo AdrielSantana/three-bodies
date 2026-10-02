@@ -140,7 +140,7 @@ A prova não usa táticas nem aproximações: o próprio verificador roda os 352
 bend PHYSICS.bend --check-only
 ```
 
-**Status:** a primeira verificação completa começou em 2 de outubro de 2026 e ainda está rodando. Esta seção vai ser atualizada com o resultado.
+**Status:** verificado. Com o Bend 2.0.34 num Apple M5, `bend PHYSICS.bend --check-only` imprimiu `ALL PROOFS CHECK` em 2 de outubro de 2026, depois de 2 h 58 min. Esse é o verificador normal do Bend; a reverificação com o kernel construído em Lean (`--verdict`) ainda não foi feita.
 
 ### O que não está provado
 
