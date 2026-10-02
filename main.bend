@@ -1,4 +1,4 @@
-# Tres Corpos: the gravitational three-body problem, live. Three point
+# Three Bodies: the gravitational three-body problem, live. Three point
 # masses under Newton's law, G = 1, with no softening to speak of
 # (1e-6 of a length unit, so a collision is a number and not a NaN).
 #
@@ -400,25 +400,25 @@ def Scn.show(id: U32) -> U32:
 def Scn.name(id: U32) -> String:
   match id:
     case 0:
-      "Figura-8 (Moore, Chenciner-Montgomery)"
+      "Figure-8 (Moore, Chenciner-Montgomery)"
     case 1:
-      "Borboleta I (Suvakov-Dmitrasinovic)"
+      "Butterfly I (Suvakov-Dmitrasinovic)"
     case 2:
-      "Mariposa I (Suvakov-Dmitrasinovic)"
+      "Moth I (Suvakov-Dmitrasinovic)"
     case 3:
       "Yin-Yang I (Suvakov-Dmitrasinovic)"
     case 4:
-      "Novelo (Suvakov-Dmitrasinovic)"
+      "Yarn (Suvakov-Dmitrasinovic)"
     case 5:
-      "Triangulo de Lagrange: da ordem ao caos"
+      "Lagrange's triangle: from order to chaos"
     case 6:
-      "Problema pitagorico de Burrau (3-4-5)"
+      "Burrau's Pythagorean problem (3-4-5)"
     case 7:
-      "Estrela, planeta e lua"
+      "Star, planet and moon"
     case 8:
-      "Planeta de duas estrelas"
+      "A planet of two stars"
     case _:
-      "Caos: tres massas ao acaso"
+      "Chaos: three random masses"
 
 # Light
 # -----
@@ -913,10 +913,10 @@ def World.title(w: World, fps: U32) -> String:
   World{+sys, _, run, opt, _} = w
   Run{+id, _, t, +e0, _, _} = run
   Opt{paused, _, tour, speed} = opt
-  "3 Corpos | " ++ U32.show((id + 1 : U32)) ++ "/10 " ++ Scn.name(id) ++ " | " ++ U32.show(fps)
+  "3 Bodies | " ++ U32.show((id + 1 : U32)) ++ "/10 " ++ Scn.name(id) ++ " | " ++ U32.show(fps)
     ++ " FPS | t = " ++ Fix.show(t) ++ " | dE/E = "
     ++ U32.show(F32.to_u32((1000000.0 * F32.abs(((Sys.energy(sys) - e0) / e0 : F32)) + 0.5 : F32)))
-    ++ " ppm | x" ++ Fix.show(speed) ++ Tag.of(tour, " | tour") ++ Tag.of(paused, " | PAUSA")
+    ++ " ppm | x" ++ Fix.show(speed) ++ Tag.of(tour, " | tour") ++ Tag.of(paused, " | PAUSED")
 
 # Loop
 # ----
@@ -974,6 +974,6 @@ def Loop.go(fuel: Nat, window: Window, w: World, old: Image) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    window : Window <- IO.try(Window, Window.open("Problema dos 3 Corpos", Screen.w(), Screen.h()))
+    window : Window <- IO.try(Window, Window.open("The 3-Body Problem", Screen.w(), Screen.h()))
     +now : Nat <- IO.now()
     Loop.go(4294967295n, window, World.init(now), Pix{0})

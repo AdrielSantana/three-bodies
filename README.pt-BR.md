@@ -4,9 +4,9 @@
 
 O problema gravitacional dos três corpos, ao vivo, escrito em [Bend](https://bend-lang.com). A física roda na CPU; cada pixel de cada quadro é calculado na GPU.
 
-![Figura-8 de Moore, Chenciner e Montgomery](previa-figura8.png)
+![Figura-8 de Moore, Chenciner e Montgomery](preview-figure8.png)
 
-![Problema pitagórico de Burrau](previa-burrau.png)
+![Problema pitagórico de Burrau](preview-burrau.png)
 
 ## Como rodar
 
@@ -65,6 +65,8 @@ Com o tour ligado, o próximo cenário entra quando um corpo é ejetado ou quand
 | 0 | Caos: três massas ao acaso |
 
 Os cinco primeiros são soluções periódicas. O triângulo de Lagrange é instável para massas iguais: aguenta algumas voltas até o arredondamento do último bit desfazê-lo. O último cenário sorteia três corpos novos a cada vez.
+
+O título da janela e os nomes dos cenários dentro do app estão em inglês.
 
 ## Como funciona
 

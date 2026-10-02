@@ -4,9 +4,9 @@
 
 The gravitational three-body problem, live, written in [Bend](https://bend-lang.com). The physics runs on the CPU; every pixel of every frame is computed on the GPU.
 
-![The figure-8 of Moore, Chenciner and Montgomery](previa-figura8.png)
+![The figure-8 of Moore, Chenciner and Montgomery](preview-figure8.png)
 
-![Burrau's Pythagorean problem](previa-burrau.png)
+![Burrau's Pythagorean problem](preview-burrau.png)
 
 ## Running it
 
@@ -65,8 +65,6 @@ With the tour on, the next scenario comes in when a body is ejected or when the 
 | 0 | Chaos: three random masses |
 
 The first five are periodic solutions. Lagrange's triangle is unstable for equal masses: it holds for a few turns until the rounding of the last bit tears it apart. The last scenario draws three new bodies every time.
-
-The window title and the scenario names inside the app are in Portuguese.
 
 ## How it works
 

@@ -1,4 +1,4 @@
-# Tres Corpos -- the proofs. The two quits hold by computation; the
+# Three Bodies -- the proofs. The two quits hold by computation; the
 # pause opens the world and its clocks, then computes; Space twice
 # opens the world down to the pause flag and computes each case.
 import Base

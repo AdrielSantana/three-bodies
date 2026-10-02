@@ -1,4 +1,4 @@
-# Tres Corpos -- the laws: what the keys and a pause may do to the world.
+# Three Bodies -- the laws: what the keys and a pause may do to the world.
 import Base
 import ./main.bend as App
 
