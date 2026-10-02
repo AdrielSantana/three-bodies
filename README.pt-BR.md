@@ -86,25 +86,57 @@ O título da janela e os nomes dos cenários dentro do app estão em inglês.
 
 ## Leis e provas
 
-`LAWS.bend` enuncia quatro leis sobre o programa e `PROOF.bend` as prova:
-
-- `esc_quits`: Esc encerra, qualquer que seja o mundo e o que vier depois.
-- `close_quits`: fechar a janela encerra.
-- `pause_freezes`: um mundo pausado não se move, diga o relógio o que disser.
-- `space_twice`: Espaço duas vezes não muda nada.
-
-Para conferir:
+`LAWS.bend` diz o que o programa tem que fazer, e `PROOF.bend` prova. O verificador do Bend confere cada lei para todas as entradas possíveis, e não para uma amostra, como um teste faria:
 
 ```bash
 bend PROOF.bend --check-only
 ```
+
+As provas passam no Bend 2.0.25 e no 2.0.34.
+
+### Do one-shot
+
+| Lei | O que garante |
+| --- | --- |
+| `esc_quits` | Esc encerra, qualquer que seja o mundo e o que vier depois. |
+| `close_quits` | Fechar a janela encerra. |
+| `pause_freezes` | Um quadro pausado não move os corpos, diga o relógio o que disser. |
+| `space_twice` | Espaço duas vezes não muda nada. |
+
+### Adicionadas depois, pelo Claude Opus 5.5
+
+| Lei | O que garante |
+| --- | --- |
+| `step_keeps_mass` | Um passo do integrador nunca muda uma massa, quaisquer que sejam os corpos e o tamanho do passo. |
+| `run_keeps_mass` | Nem uma simulação inteira, com quantos passos for (por indução). |
+| `esc_anywhere` | Esc encerra em qualquer ponto dos eventos de um quadro, não importa o que veio antes. |
+| `close_anywhere` | Fechar a janela também. |
+| `digits_pick` | As teclas 1–9 escolhem os cenários 1–9, e o 0 escolhe o 10º, a partir de qualquer estado. |
+| `n_cycles` | A partir do primeiro cenário, N passa pelos outros nove em ordem e volta ao primeiro. |
+| `b_cycles` | B faz o mesmo de trás para frente. |
+| `restart_restores` | Em qualquer um dos nove cenários fixos, R devolve os corpos exatamente ao início do cenário, não importa o que aconteceu antes. |
+| `pause_keeps_run` | Um quadro pausado mantém o cenário, o tempo simulado e o relógio do tour. |
+| `pause_keeps_trails` | Um quadro desenhado em pausa não apaga rastro nenhum. |
+| `load_wipes` | Um cenário novo apaga os rastros antigos, uma única vez. |
+| `g_twice` | G duas vezes não muda nada. |
+| `t_twice` | T duas vezes não muda nada. |
+
+Cada lei nova também foi testada contra bugs injetados de propósito, como deixar o integrador mexer numa massa, fazer o N pular um cenário ou fazer o R ir para o próximo. Todos os bugs fizeram a verificação falhar.
+
+### O que não está provado, e por quê
+
+A física. O verificador do Bend trata as contas com `F32` como caixas-pretas: não consegue provar nem `1.5 + 2.25 == 3.75` em `F32`. Todas as posições, velocidades e energias deste programa são `F32`, então nenhuma lei sobre órbitas, energia ou momento pode ser provada no Bend hoje. E em ponto flutuante energia e momento não se conservam exatamente, só de forma aproximada.
+
+No lugar de prova, o programa oferece uma medição: o título da janela mostra, ao vivo, quanto a energia total se desviou do valor inicial, em partes por milhão.
+
+Também ficam de fora a imagem calculada na GPU e o código de janela e teclado que conversa com o sistema operacional, que as provas do Bend não alcançam.
 
 ## Arquivos
 
 | Arquivo | Conteúdo |
 | --- | --- |
 | `main.bend` | A simulação: física, cenários, pixels, teclado e laço principal |
-| `LAWS.bend` | As leis |
+| `LAWS.bend` | As leis: o que o programa tem que fazer |
 | `PROOF.bend` | As provas |
 
 ## Licença

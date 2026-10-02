@@ -84,25 +84,57 @@ The first five are periodic solutions. Lagrange's triangle is unstable for equal
 
 ## Laws and proofs
 
-`LAWS.bend` states four laws about the program and `PROOF.bend` proves them:
-
-- `esc_quits`: Esc quits, whatever the world and whatever follows.
-- `close_quits`: closing the window quits.
-- `pause_freezes`: a paused world does not move, whatever the clock says.
-- `space_twice`: Space twice changes nothing.
-
-To check them:
+`LAWS.bend` states what the program must do, and `PROOF.bend` proves it. Bend's checker verifies each law for every possible input, not for a sample like a test does:
 
 ```bash
 bend PROOF.bend --check-only
 ```
+
+The proofs check with Bend 2.0.25 and 2.0.34.
+
+### From the one-shot
+
+| Law | What it guarantees |
+| --- | --- |
+| `esc_quits` | Esc quits, whatever the world and whatever follows. |
+| `close_quits` | Closing the window quits. |
+| `pause_freezes` | A paused frame does not move the bodies, whatever the clock says. |
+| `space_twice` | Space twice changes nothing. |
+
+### Added afterwards, by Claude Opus 5.5
+
+| Law | What it guarantees |
+| --- | --- |
+| `step_keeps_mass` | An integration step never changes a mass, for any bodies and any step size. |
+| `run_keeps_mass` | Neither does a whole run of the integrator, however many steps it takes (by induction). |
+| `esc_anywhere` | Esc quits wherever it comes in a frame's events, whatever came before it. |
+| `close_anywhere` | So does closing the window. |
+| `digits_pick` | Keys 1–9 pick scenarios 1–9, and 0 picks the 10th, from any world. |
+| `n_cycles` | From the first scenario, N visits the other nine in order and comes back. |
+| `b_cycles` | B visits them backwards. |
+| `restart_restores` | On any of the nine fixed scenarios, R puts the bodies back exactly where the scenario starts, whatever happened since. |
+| `pause_keeps_run` | A paused frame keeps the scenario, the simulated time and the tour clock. |
+| `pause_keeps_trails` | A frame drawn while paused fades no trail. |
+| `load_wipes` | A new scenario wipes the old trails, exactly once. |
+| `g_twice` | G twice changes nothing. |
+| `t_twice` | T twice changes nothing. |
+
+Each new law was also tested against injected bugs, such as letting the integrator touch a mass, making N skip a scenario or making R jump to the next one. Every bug made the check fail.
+
+### What is not proven, and why
+
+The physics. Bend's checker treats `F32` arithmetic as opaque: it cannot prove even `1.5 + 2.25 == 3.75` in `F32`. Every position, velocity and energy in this program is an `F32`, so no law about orbits, energy or momentum can be proven in Bend today. In floating point, energy and momentum are not exactly conserved anyway, only approximately.
+
+What the program offers instead is a measurement: the window title shows, live, how far the total energy has drifted from its starting value, in parts per million.
+
+Also not covered: the picture computed on the GPU, and the window and keyboard code that talks to the operating system, which Bend's proofs never reach.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
 | `main.bend` | The simulation: physics, scenarios, pixels, keyboard and main loop |
-| `LAWS.bend` | The laws |
+| `LAWS.bend` | The laws: what the program must do |
 | `PROOF.bend` | The proofs |
 
 ## License
