@@ -102,3 +102,7 @@ bend PROOF.bend --check-only
 | `main.bend` | A simulação: física, cenários, pixels, teclado e laço principal |
 | `LAWS.bend` | As leis |
 | `PROOF.bend` | As provas |
+
+## Licença
+
+[MIT](LICENSE) © Adriel Santana
