@@ -2,13 +2,16 @@
 # masses under Newton's law, G = 1, with no softening to speak of
 # (1e-6 of a length unit, so a collision is a number and not a NaN).
 #
-# The physics runs on the host, in F32 made honest: positions and
-# velocities are double-single (a value and its rounding error, summed
-# by Knuth's TwoSum), the integrator is the 4th-order symplectic
-# Forest-Ruth composition of three leapfrogs, and the step follows the
-# tightest pair (2% of its free-fall or fly-by time), so a slingshot at
-# 0.0004 of the frame is resolved, not skipped. The title shows the
-# drift of the total energy in parts per million.
+# The physics runs on the host, in IEEE-754 binary64 done in software
+# (D: bend-collections' f64.bend, correctly rounded), so the proof
+# checker computes the very numbers the app does, and PHYSICS.bend can
+# prove what they do. It never divides or takes a root: 1/sqrt is
+# Newton's method from a first guess read off the bits. The integrator
+# is the 4th-order symplectic Forest-Ruth composition of three
+# leapfrogs, and the step follows the tightest pair (2% of its free-fall
+# or fly-by time), so a slingshot at 0.0004 of the frame is resolved,
+# not skipped. The title shows the drift of the total energy in parts
+# per million.
 #
 # The picture is one bang: eight levels of four-way forks from the
 # 2048 root to 8-px tiles (160 x 90 = 14400 of the device's 16384
@@ -27,6 +30,7 @@
 #
 #   bend main.bend -o tres && ./tres
 import Base
+import ./vendor/bend-collections/f64.bend as D
 
 # Numbers
 # -------
@@ -56,106 +60,157 @@ def max(+a: F32, +b: F32) -> F32:
 def sat(+x: F32) -> F32:
   min(1.0, max(0.0, x))
 
+# Doubles
+# -------
+# The physics' numbers. A constant is written by its bits, the decimal
+# beside it.
+
+def Dbl.pick(c: Bool, a: D.F64, b: D.F64) -> D.F64:
+  match c:
+    case True{}:
+      a
+    case False{}:
+      b
+
+def Dbl.min(+a: D.F64, +b: D.F64) -> D.F64:
+  Dbl.pick(D.lt(a, b), a, b)
+
+def Dbl.max(+a: D.F64, +b: D.F64) -> D.F64:
+  Dbl.pick(D.lt(a, b), b, a)
+
+def Dbl.zero() -> D.F64:
+  D.zero(False{})
+
+# 0.5
+def Dbl.half() -> D.F64:
+  D.of_bits(1071644672, 0)
+
+# 1e-12, the softening of a squared distance.
+def Dbl.soft() -> D.F64:
+  D.of_bits(1030854553, 2167269905)
+
+# 1/sqrt(x), for x > 0. The first guess halves the exponent through the
+# bits (0x5FE6EB50C7B537A9 minus half the word, within 3.5%); four
+# Newton steps, y <- y (3/2 - x/2 y^2), each square the error, to the
+# last bits of a double.
+def Rsq.bit(b: Bool) -> U32:
+  match b:
+    case True{}:
+      1
+    case False{}:
+      0
+
+def Rsq.guess(+x: D.F64) -> D.F64:
+  +hi = D.word_hi(x)
+  +lo = D.word_lo(x)
+  +slo = (lo >> 1n .|. (hi .&. 1) << 31n : U32)
+  +shi = (hi >> 1n : U32)
+  D.of_bits((1608969040 - shi - Rsq.bit((3350542249 < slo : U32)) : U32), (3350542249 - slo : U32))
+
+# 1.5
+def Rsq.newton(+h: D.F64, +y: D.F64) -> D.F64:
+  D.mul(y, D.sub(D.of_bits(1073217536, 0), D.mul(h, D.mul(y, y))))
+
+def Rsq.of(+x: D.F64) -> D.F64:
+  +h = D.mul(Dbl.half(), x)
+  Rsq.newton(h, Rsq.newton(h, Rsq.newton(h, Rsq.newton(h, Rsq.guess(x)))))
+
+# 1/x, for x > 0.
+def Dbl.inv(+x: D.F64) -> D.F64:
+  +q = Rsq.of(x)
+  D.mul(q, q)
+
+# A float as a double, exactly (zero for a subnormal).
+def Dbl.exp32(+e: U32) -> U32:
+  word(U32.is_eq(e, 0), 0, word(U32.is_eq(e, 255), 2047, (e + 896 : U32)))
+
+def Dbl.of_f32(x: F32) -> D.F64:
+  +b = F32.bits(x)
+  +e = (b >> 23n .&. 255 : U32)
+  +m = (b .&. 8388607 : U32)
+  +z = U32.is_eq(e, 0)
+  D.of_bits((b >> 31n << 31n .|. Dbl.exp32(e) << 20n .|. word(z, 0, (m >> 3n : U32)) : U32),
+    word(z, 0, (m .&. 7 << 29n : U32)))
+
+# A double as a float, its 24 top bits (for the picture and the title).
+def Dbl.to_f32(+x: D.F64) -> F32:
+  +hi = D.word_hi(x)
+  +e = (hi >> 20n .&. 2047 : U32)
+  +m = U32.to_f32((8388608 .|. (hi .&. 1048575) << 3n .|. D.word_lo(x) >> 29n : U32))
+  +v = (m * F32.pow(2.0, (U32.to_f32(e) - 1046.0 : F32)) : F32)
+  pick(U32.is_eq(e, 0), 0.0, pick(((hi >> 31n) > 0 : U32), (0.0 - v : F32), v))
+
 # Bodies
 # ------
-# A Two is a double-single: hi + lo, with lo the rounding error hi left
-# behind. A Body is its position (x, y), its velocity (u, v) and its
-# mass; a Sys is the three of them.
-
-type Two is Data:
-  Two{hi: F32, lo: F32}
+# A Body is its position (x, y), its velocity (u, v) and its mass; a Sys
+# is the three of them.
 
 type Vec is Data:
-  Vec{x: F32, y: F32}
+  Vec{x: D.F64, y: D.F64}
 
 type Body is Data:
-  Body{x: Two, y: Two, u: Two, v: Two, m: F32}
+  Body{x: D.F64, y: D.F64, u: D.F64, v: D.F64, m: D.F64}
 
 type Sys is Data:
   Sys{a: Body, b: Body, c: Body}
 
 # What a run leaves: the system and the time it did not get to.
 type Ran is Data:
-  Ran{sys: Sys, left: F32}
+  Ran{sys: Sys, left: D.F64}
 
-# t + d with nothing lost: TwoSum gives the sum and its exact error,
-# the error joins lo, and the pair is renormalized.
-def Two.plus(+t: Two, +d: F32) -> Two:
-  Two{hi, lo} = t
-  +s = (hi + d : F32)
-  +bb = (s - hi : F32)
-  +l = (lo + (hi - (s - bb) + (d - bb)) : F32)
-  +r = (s + l : F32)
-  +rb = (r - s : F32)
-  Two{r, (s - (r - rb) + (l - rb) : F32)}
-
-def Two.val(t: Two) -> F32:
-  Two{hi, lo} = t
-  (hi + lo : F32)
-
-# b - a: the his cancel exactly when the two are close, the los carry
-# the digits F32 dropped.
-def Two.gap(a: Two, b: Two) -> F32:
-  Two{ah, al} = a
-  Two{bh, bl} = b
-  (bh - ah + (bl - al) : F32)
-
-def Body.new(x: F32, y: F32, u: F32, v: F32, m: F32) -> Body:
-  Body{Two{x, 0.0}, Two{y, 0.0}, Two{u, 0.0}, Two{v, 0.0}, m}
-
-def Body.drift(+p: Body, +h: F32) -> Body:
+def Body.drift(+p: Body, +h: D.F64) -> Body:
   Body{x, y, u, v, m} = p
-  Body{Two.plus(x, (Two.val(u) * h : F32)), Two.plus(y, (Two.val(v) * h : F32)), u, v, m}
+  Body{D.add(x, D.mul(u, h)), D.add(y, D.mul(v, h)), u, v, m}
 
-def Body.kick(+p: Body, ax: F32, ay: F32, +h: F32) -> Body:
+def Body.kick(+p: Body, ax: D.F64, ay: D.F64, +h: D.F64) -> Body:
   Body{x, y, u, v, m} = p
-  Body{x, y, Two.plus(u, (ax * h : F32)), Two.plus(v, (ay * h : F32)), m}
+  Body{x, y, D.add(u, D.mul(ax, h)), D.add(v, D.mul(ay, h)), m}
+
+# dx^2 + dy^2, softened.
+def Body.r2(+dx: D.F64, +dy: D.F64) -> D.F64:
+  D.add(D.add(D.mul(dx, dx), D.mul(dy, dy)), Dbl.soft())
 
 # q's pull on p per unit of q's mass: (q - p) / |q - p|^3.
 def Body.pull(+p: Body, +q: Body) -> Vec:
   Body{px, py, _, _, _} = p
   Body{qx, qy, _, _, _} = q
-  +dx = Two.gap(px, qx)
-  +dy = Two.gap(py, qy)
-  +r2 = (dx * dx + dy * dy + 0.000000000001 : F32)
-  +k = (1.0 / (r2 * F32.sqrt(r2)) : F32)
-  Vec{(dx * k : F32), (dy * k : F32)}
+  +dx = D.sub(qx, px)
+  +dy = D.sub(qy, py)
+  +i = Rsq.of(Body.r2(dx, dy))
+  +k = D.mul(i, D.mul(i, i))
+  Vec{D.mul(dx, k), D.mul(dy, k)}
 
-# The square of a pair's time scale: 1/t^2 = (mp + mq)/r^3 + w^2/r^2,
+# One over the square of a pair's time scale: (mp + mq)/r^3 + w^2/r^2,
 # its free fall and its fly-by.
-def Body.pace(+p: Body, +q: Body) -> F32:
+def Body.pace(+p: Body, +q: Body) -> D.F64:
   Body{px, py, pu, pv, pm} = p
   Body{qx, qy, qu, qv, qm} = q
-  +dx = Two.gap(px, qx)
-  +dy = Two.gap(py, qy)
-  +wx = Two.gap(pu, qu)
-  +wy = Two.gap(pv, qv)
-  +r2 = (dx * dx + dy * dy + 0.000000000001 : F32)
-  +t = (r2 * F32.sqrt(r2) / (pm + qm) : F32)
-  (t * r2 / (r2 + t * (wx * wx + wy * wy)) : F32)
+  +dx = D.sub(qx, px)
+  +dy = D.sub(qy, py)
+  +wx = D.sub(qu, pu)
+  +wy = D.sub(qv, pv)
+  +i = Rsq.of(Body.r2(dx, dy))
+  +i2 = D.mul(i, i)
+  D.add(D.mul(D.add(pm, qm), D.mul(i, i2)), D.mul(D.add(D.mul(wx, wx), D.mul(wy, wy)), i2))
 
 # A pair's binding energy, positive.
-def Body.bind(+p: Body, +q: Body) -> F32:
+def Body.bind(+p: Body, +q: Body) -> D.F64:
   Body{px, py, _, _, pm} = p
   Body{qx, qy, _, _, qm} = q
-  +dx = Two.gap(px, qx)
-  +dy = Two.gap(py, qy)
-  (pm * qm / F32.sqrt((dx * dx + dy * dy + 0.000000000001 : F32)) : F32)
+  D.mul(D.mul(pm, qm), Rsq.of(Body.r2(D.sub(qx, px), D.sub(qy, py))))
 
-def Body.move(+p: Body) -> F32:
+def Body.move(+p: Body) -> D.F64:
   Body{_, _, u, v, m} = p
-  +a = Two.val(u)
-  +b = Two.val(v)
-  (0.5 * m * (a * a + b * b) : F32)
+  D.mul(D.mul(Dbl.half(), m), D.add(D.mul(u, u), D.mul(v, v)))
 
 # Kinetic minus binding: the constant of the motion the title watches.
-def Sys.energy(+s: Sys) -> F32:
+def Sys.energy(+s: Sys) -> D.F64:
   Sys{a, b, c} = s
-  (Body.move(a) + Body.move(b) + Body.move(c) - Body.bind(a, b) - Body.bind(a, c) - Body.bind(b, c)
-    : F32)
+  D.sub(D.sub(D.sub(D.add(D.add(Body.move(a), Body.move(b)), Body.move(c)), Body.bind(a, b)), Body.bind(a, c)),
+    Body.bind(b, c))
 
 # Newton's third law: three pulls feed six kicks.
-def Sys.kick(+s: Sys, +ab: Vec, +ac: Vec, +bc: Vec, +h: F32) -> Sys:
+def Sys.kick(+s: Sys, +ab: Vec, +ac: Vec, +bc: Vec, +h: D.F64) -> Sys:
   Sys{a, b, c} = s
   Body{_, _, _, _, ma} = a
   Body{_, _, _, _, mb} = b
@@ -163,38 +218,39 @@ def Sys.kick(+s: Sys, +ab: Vec, +ac: Vec, +bc: Vec, +h: F32) -> Sys:
   Vec{abx, aby} = ab
   Vec{acx, acy} = ac
   Vec{bcx, bcy} = bc
-  Sys{Body.kick(a, (mb * abx + mc * acx : F32), (mb * aby + mc * acy : F32), h),
-    Body.kick(b, (mc * bcx - ma * abx : F32), (mc * bcy - ma * aby : F32), h),
-    Body.kick(c, (0.0 - ma * acx - mb * bcx : F32), (0.0 - ma * acy - mb * bcy : F32), h)}
+  Sys{Body.kick(a, D.add(D.mul(mb, abx), D.mul(mc, acx)), D.add(D.mul(mb, aby), D.mul(mc, acy)), h),
+    Body.kick(b, D.sub(D.mul(mc, bcx), D.mul(ma, abx)), D.sub(D.mul(mc, bcy), D.mul(ma, aby)), h),
+    Body.kick(c, D.neg(D.add(D.mul(ma, acx), D.mul(mb, bcx))), D.neg(D.add(D.mul(ma, acy), D.mul(mb, bcy))), h)}
 
-def Sys.drift(+s: Sys, +h: F32) -> Sys:
+def Sys.drift(+s: Sys, +h: D.F64) -> Sys:
   Sys{a, b, c} = s
   Sys{Body.drift(a, h), Body.drift(b, h), Body.drift(c, h)}
 
-def Sys.pulled(+s: Sys, +h: F32) -> Sys:
+def Sys.pulled(+s: Sys, +h: D.F64) -> Sys:
   Sys{a, b, c} = s
   Sys.kick(s, Body.pull(a, b), Body.pull(a, c), Body.pull(b, c), h)
 
 # A leapfrog: half a drift, a kick, half a drift.
-def Sys.leap(+s: Sys, +h: F32) -> Sys:
-  +hh = (0.5 * h : F32)
+def Sys.leap(+s: Sys, +h: D.F64) -> Sys:
+  +hh = D.mul(Dbl.half(), h)
   Sys.drift(Sys.pulled(Sys.drift(s, hh), h), hh)
 
-# Forest-Ruth: three leapfrogs of w, 1 - 2w and w, with w = 1/(2 - 2^(1/3)),
-# cancel the error to the 4th order.
-def Sys.step(+s: Sys, +h: F32) -> Sys:
-  +w = (1.3512072 * h : F32)
-  Sys.leap(Sys.leap(Sys.leap(s, w), (h - 2.0 * w : F32)), w)
+# Forest-Ruth: three leapfrogs of w, 1 - 2w and w, with w = 1/(2 - 2^(1/3))
+# = 1.3512071919596578, cancel the error to the 4th order.
+def Sys.step(+s: Sys, +h: D.F64) -> Sys:
+  +w = D.mul(D.of_bits(1073061515, 1857643321), h)
+  Sys.leap(Sys.leap(Sys.leap(s, w), D.sub(h, D.add(w, w))), w)
 
 # The time scale of the tightest pair.
-def Sys.pace(+s: Sys) -> F32:
+def Sys.pace(+s: Sys) -> D.F64:
   Sys{a, b, c} = s
-  F32.sqrt(min(Body.pace(a, b), min(Body.pace(a, c), Body.pace(b, c))))
+  Rsq.of(Dbl.max(Body.pace(a, b), Dbl.max(Body.pace(a, c), Body.pace(b, c))))
 
-# The system advanced by left, in steps of 2% of its pace; the fuel
-# bounds a frame's work, and a frame that runs out (a collision course)
-# hands back the time it owes: the world slows down instead of lying.
-def Sys.run(fuel: Nat, done: Bool, +left: F32, +s: Sys) -> Ran:
+# The system advanced by left, in steps of 2% (0.02) of its pace; the
+# fuel bounds a frame's work, and a frame that runs out (a collision
+# course) hands back the time it owes: the world slows down instead of
+# lying.
+def Sys.run(fuel: Nat, done: Bool, +left: D.F64, +s: Sys) -> Ran:
   match fuel:
     case 0n:
       Ran{s, left}
@@ -203,59 +259,63 @@ def Sys.run(fuel: Nat, done: Bool, +left: F32, +s: Sys) -> Ran:
         case True{}:
           Ran{s, left}
         case False{}:
-          +h = min(left, (0.02 * Sys.pace(s) : F32))
-          +rest = (left - h : F32)
-          Sys.run(f, (rest <= 0.0 : F32), rest, Sys.step(s, h))
+          +h = Dbl.min(left, D.mul(D.of_bits(1066695393, 1202590843), Sys.pace(s)))
+          +rest = D.sub(left, h)
+          Sys.run(f, D.le(rest, Dbl.zero()), rest, Sys.step(s, h))
 
-def Body.shift(p: Body, dx: F32, dy: F32, du: F32, dv: F32) -> Body:
+def Body.shift(p: Body, +dx: D.F64, +dy: D.F64, +du: D.F64, +dv: D.F64) -> Body:
   Body{x, y, u, v, m} = p
-  Body.new((Two.val(x) - dx : F32), (Two.val(y) - dy : F32), (Two.val(u) - du : F32),
-    (Two.val(v) - dv : F32), m)
+  Body{D.sub(x, dx), D.sub(y, dy), D.sub(u, du), D.sub(v, dv), m}
+
+# sum m q / sum m, for q one coordinate of the three.
+def Sys.mean(+am: D.F64, +bm: D.F64, +cm: D.F64, aq: D.F64, bq: D.F64, cq: D.F64, +inv: D.F64) -> D.F64:
+  D.mul(D.add(D.add(D.mul(am, aq), D.mul(bm, bq)), D.mul(cm, cq)), inv)
 
 # The system seen from its centre of mass, at rest: the camera never
 # has to move.
 def Sys.center(+s: Sys) -> Sys:
   Sys{a, b, c} = s
-  Body{ax, ay, au, av, am} = a
-  Body{bx, by, bu, bv, bm} = b
-  Body{cx, cy, cu, cv, cm} = c
-  +m = (am + bm + cm : F32)
-  +x = ((am * Two.val(ax) + bm * Two.val(bx) + cm * Two.val(cx)) / m : F32)
-  +y = ((am * Two.val(ay) + bm * Two.val(by) + cm * Two.val(cy)) / m : F32)
-  +u = ((am * Two.val(au) + bm * Two.val(bu) + cm * Two.val(cu)) / m : F32)
-  +v = ((am * Two.val(av) + bm * Two.val(bv) + cm * Two.val(cv)) / m : F32)
+  Body{ax, ay, au, av, +am} = a
+  Body{bx, by, bu, bv, +bm} = b
+  Body{cx, cy, cu, cv, +cm} = c
+  +inv = Dbl.inv(D.add(D.add(am, bm), cm))
+  +x = Sys.mean(am, bm, cm, ax, bx, cx, inv)
+  +y = Sys.mean(am, bm, cm, ay, by, cy, inv)
+  +u = Sys.mean(am, bm, cm, au, bu, cu, inv)
+  +v = Sys.mean(am, bm, cm, av, bv, cv, inv)
   Sys{Body.shift(a, x, y, u, v), Body.shift(b, x, y, u, v), Body.shift(c, x, y, u, v)}
 
 # The square of a body's distance from the centre.
-def Body.far(p: Body) -> F32:
+def Body.far(+p: Body) -> D.F64:
   Body{x, y, _, _, _} = p
-  +a = Two.val(x)
-  +b = Two.val(y)
-  (a * a + b * b : F32)
+  D.add(D.mul(x, x), D.mul(y, y))
 
-# Are the three bodies somewhere? A comparison with a NaN is False,
-# so a body that is not a number fails it.
+# Are the three bodies somewhere (within 10^6)? A comparison with a NaN
+# is False, so a body that is not a number fails it.
 def Sys.sane(+s: Sys) -> Bool:
   Sys{a, b, c} = s
-  ((Body.far(a) < 1000000000000.0) && (Body.far(b) < 1000000000000.0)
-    && (Body.far(c) < 1000000000000.0) : F32)
+  +big = D.of_bits(1114446484, 2717908992)
+  D.lt(Body.far(a), big) && D.lt(Body.far(b), big) && D.lt(Body.far(c), big)
 
 # Is p leaving for good? Seen from the centre of mass of the other
 # two, it is more than 800 px away, moving outwards, and its two-body
 # energy is positive: an ejection, not an excursion.
-def Body.gone(+p: Body, +q: Body, +r: Body, zoom: F32) -> Bool:
+def Body.gone(+p: Body, +q: Body, +r: Body, +zoom: D.F64) -> Bool:
   Body{px, py, pu, pv, pm} = p
-  Body{qx, qy, qu, qv, qm} = q
-  Body{rx, ry, ru, rv, rm} = r
-  +m = (qm + rm : F32)
-  +dx = (Two.val(px) - (qm * Two.val(qx) + rm * Two.val(rx)) / m : F32)
-  +dy = (Two.val(py) - (qm * Two.val(qy) + rm * Two.val(ry)) / m : F32)
-  +wx = (Two.val(pu) - (qm * Two.val(qu) + rm * Two.val(ru)) / m : F32)
-  +wy = (Two.val(pv) - (qm * Two.val(qv) + rm * Two.val(rv)) / m : F32)
-  +d = F32.sqrt((dx * dx + dy * dy : F32))
-  ((d * zoom > 800.0) && (dx * wx + dy * wy > 0.0) && (0.5 * (wx * wx + wy * wy) * d > pm + m) : F32)
+  Body{qx, qy, qu, qv, +qm} = q
+  Body{rx, ry, ru, rv, +rm} = r
+  +m = D.add(qm, rm)
+  +inv = Dbl.inv(m)
+  +dx = D.sub(px, D.mul(D.add(D.mul(qm, qx), D.mul(rm, rx)), inv))
+  +dy = D.sub(py, D.mul(D.add(D.mul(qm, qy), D.mul(rm, ry)), inv))
+  +wx = D.sub(pu, D.mul(D.add(D.mul(qm, qu), D.mul(rm, ru)), inv))
+  +wy = D.sub(pv, D.mul(D.add(D.mul(qm, qv), D.mul(rm, rv)), inv))
+  +r2 = D.add(D.mul(dx, dx), D.mul(dy, dy))
+  +d = D.mul(r2, Rsq.of(r2))
+  D.lt(D.of_bits(1082720256, 0), D.mul(d, zoom)) && D.lt(Dbl.zero(), D.add(D.mul(dx, wx), D.mul(dy, wy)))
+    && D.lt(D.add(pm, m), D.mul(D.mul(Dbl.half(), D.add(D.mul(wx, wx), D.mul(wy, wy))), d))
 
-def Sys.gone(+s: Sys, +zoom: F32) -> Bool:
+def Sys.gone(+s: Sys, +zoom: D.F64) -> Bool:
   Sys{a, b, c} = s
   Body.gone(a, b, c, zoom) || Body.gone(b, a, c, zoom) || Body.gone(c, a, b, zoom)
 
@@ -275,9 +335,12 @@ def Sys.gone(+s: Sys, +zoom: F32) -> Bool:
 def Scn.count() -> U32:
   10
 
-def Scn.trio(+p: F32, +q: F32) -> Sys:
-  Sys{Body.new((0.0 - 1.0 : F32), 0.0, p, q, 1.0), Body.new(1.0, 0.0, p, q, 1.0),
-    Body.new(0.0, 0.0, (0.0 - 2.0 * p : F32), (0.0 - 2.0 * q : F32), 1.0)}
+# (-1, 0), (1, 0) and (0, 0), with velocities (p, q), (p, q), (-2p, -2q).
+def Scn.trio(+p: D.F64, +q: D.F64) -> Sys:
+  +one = D.of_bits(1072693248, 0)
+  +two = D.of_bits(1073741824, 0)
+  Sys{Body{D.neg(one), Dbl.zero(), p, q, one}, Body{one, Dbl.zero(), p, q, one},
+    Body{Dbl.zero(), Dbl.zero(), D.neg(D.mul(two, p)), D.neg(D.mul(two, q)), one}}
 
 def Scn.rand(+x: U32) -> U32:
   +a = (x .^. x << 13n : U32)
@@ -296,44 +359,58 @@ def Scn.unit(k: Nat, +seed: U32) -> F32:
 # 0.7 to 1.3 from the centre, with a mass of 0.6 to 1.4, turning with
 # the others at half a radian per unit of time plus a drift of its own
 # (cold enough to stay bound, with enough spin to dance for a while
-# before one is flung out).
+# before one is flung out). It is drawn in floats, then held as doubles.
 def Scn.drop(+i: Nat, +seed: U32) -> Body:
   +k = Nat.mul(i, 5n)
   +ang = (2.0943951 * U32.to_f32(U32.from_nat(i)) + 1.2 * Scn.unit(Nat.add(k, 1n), seed) : F32)
   +rad = (0.7 + 0.6 * Scn.unit(Nat.add(k, 2n), seed) : F32)
   +x = (rad * F32.cos(ang) : F32)
   +y = (rad * F32.sin(ang) : F32)
-  Body.new(x, y, (0.5 * Scn.unit(Nat.add(k, 3n), seed) - 0.25 - 0.5 * y : F32),
-    (0.5 * Scn.unit(Nat.add(k, 4n), seed) - 0.25 + 0.5 * x : F32),
-    (0.6 + 0.8 * Scn.unit(Nat.add(k, 5n), seed) : F32))
+  Body{Dbl.of_f32(x), Dbl.of_f32(y), Dbl.of_f32((0.5 * Scn.unit(Nat.add(k, 3n), seed) - 0.25 - 0.5 * y : F32)),
+    Dbl.of_f32((0.5 * Scn.unit(Nat.add(k, 4n), seed) - 0.25 + 0.5 * x : F32)),
+    Dbl.of_f32((0.6 + 0.8 * Scn.unit(Nat.add(k, 5n), seed) : F32))}
 
 def Scn.sys(id: U32, +seed: U32) -> Sys:
   match id:
     case 0:
-      Sys{Body.new(0.97000436, (0.0 - 0.24308753 : F32), 0.466203685, 0.43236573, 1.0),
-        Body.new((0.0 - 0.97000436 : F32), 0.24308753, 0.466203685, 0.43236573, 1.0),
-        Body.new(0.0, 0.0, (0.0 - 0.93240737 : F32), (0.0 - 0.86473146 : F32), 1.0)}
+      # (0.97000436, -0.24308753), (-0.97000436, 0.24308753), (0, 0);
+      # velocities (0.466203685, 0.43236573) twice and minus twice that.
+      Sys{Body{D.of_bits(1072630342, 2506468697), D.of_bits(3218021757, 4290063474), D.of_bits(1071502919, 4212547904), D.of_bits(1071360993, 1334884082), D.of_bits(1072693248, 0)},
+        Body{D.of_bits(3220113990, 2506468697), D.of_bits(1070538109, 4290063474), D.of_bits(1071502919, 4212547904), D.of_bits(1071360993, 1334884082), D.of_bits(1072693248, 0)},
+        Body{D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(3220035143, 4212547904), D.of_bits(3219893217, 1334884082), D.of_bits(1072693248, 0)}}
     case 1:
-      Scn.trio(0.30689, 0.12551)
+      # (0.30689, 0.12551)
+      Scn.trio(D.of_bits(1070834709, 4099803982), D.of_bits(1069551798, 816387384))
     case 2:
-      Scn.trio(0.46444, 0.39606)
+      # (0.46444, 0.39606)
+      Scn.trio(D.of_bits(1071495522, 2361201221), D.of_bits(1071208716, 181419419))
     case 3:
-      Scn.trio(0.51394, 0.30474)
+      # (0.51394, 0.30474)
+      Scn.trio(D.of_bits(1071673906, 1283679825), D.of_bits(1070825692, 863116628))
     case 4:
-      Scn.trio(0.55906, 0.34919)
+      # (0.55906, 0.34919)
+      Scn.trio(D.of_bits(1071768529, 3423604331), D.of_bits(1071012129, 59098750))
     case 5:
-      Sys{Body.new(0.0, 1.0, (0.0 - 0.7598357 : F32), 0.0, 1.0),
-        Body.new((0.0 - 0.8660254 : F32), (0.0 - 0.5 : F32), 0.3799178, (0.0 - 0.658037 : F32), 1.0),
-        Body.new(0.8660254, (0.0 - 0.5 : F32), 0.3799178, 0.658037, 1.0)}
+      # (0, 1), (-0.8660254, -0.5), (0.8660254, -0.5); velocities
+      # (-0.7598357, 0), (0.3799178, -0.658037), (0.3799178, 0.658037).
+      Sys{Body{D.of_bits(0, 0), D.of_bits(1072693248, 0), D.of_bits(3219673234, 4114262560), D.of_bits(0, 0), D.of_bits(1072693248, 0)},
+        Body{D.of_bits(3219895930, 3864013713), D.of_bits(3219128320, 0), D.of_bits(1071141010, 3213542635), D.of_bits(3219459747, 2622610110), D.of_bits(1072693248, 0)},
+        Body{D.of_bits(1072412282, 3864013713), D.of_bits(3219128320, 0), D.of_bits(1071141010, 3213542635), D.of_bits(1071976099, 2622610110), D.of_bits(1072693248, 0)}}
     case 6:
-      Sys{Body.new(1.0, 3.0, 0.0, 0.0, 3.0), Body.new((0.0 - 2.0 : F32), (0.0 - 1.0 : F32), 0.0, 0.0, 4.0),
-        Body.new(1.0, (0.0 - 1.0 : F32), 0.0, 0.0, 5.0)}
+      # masses 3, 4, 5 at rest at (1, 3), (-2, -1), (1, -1).
+      Sys{Body{D.of_bits(1072693248, 0), D.of_bits(1074266112, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1074266112, 0)}, Body{D.of_bits(3221225472, 0), D.of_bits(3220176896, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1074790400, 0)},
+        Body{D.of_bits(1072693248, 0), D.of_bits(3220176896, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1075052544, 0)}}
     case 7:
-      Sys{Body.new(0.0, 0.0, 0.0, 0.0, 1.0), Body.new(1.0, 0.0, 0.0, 1.00504, 0.01),
-        Body.new(1.05, 0.0, 0.0, 1.45448, 0.0001)}
+      # a star of mass 1; a planet of 0.01 at (1, 0) moving at 1.00504;
+      # a moon of 0.0001 at (1.05, 0) moving at 1.45448.
+      Sys{Body{D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1072693248, 0)}, Body{D.of_bits(1072693248, 0), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1072698532, 3534929883), D.of_bits(1065646817, 1202590843)},
+        Body{D.of_bits(1072745676, 3435973837), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1073169804, 3523934767), D.of_bits(1058682594, 3944497965)}}
     case 8:
-      Sys{Body.new((0.0 - 0.24706 : F32), 0.0, 0.0, (0.0 - 0.69311 : F32), 1.0),
-        Body.new(0.35294, 0.0, 0.0, 0.99015, 0.7), Body.new(2.2, 0.0, 0.0, 0.87957, 0.002)}
+      # stars of 1 and 0.7 at -0.24706 and 0.35294, moving at -0.69311
+      # and 0.99015; a planet of 0.002 at 2.2, moving at 0.87957.
+      Sys{Body{D.of_bits(3218055081, 2115185494), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(3219533301, 97581657), D.of_bits(1072693248, 0)},
+        Body{D.of_bits(1071027857, 2807877819), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1072672591, 226774273), D.of_bits(1072064102, 1717986918)},
+        Body{D.of_bits(1073846681, 2576980378), D.of_bits(0, 0), D.of_bits(0, 0), D.of_bits(1072440687, 4228996598), D.of_bits(1063281229, 3539053052)}}
     case _:
       Sys{Scn.drop(0n, seed), Scn.drop(1n, seed), Scn.drop(2n, seed)}
 
@@ -638,7 +715,7 @@ def Frame.show(u: Uni, old: Image) -> Image:
 # the energy it started with; age: the milliseconds it has been on;
 # wipe: the trails must go before the next frame.
 type Run is Data:
-  Run{id: U32, seed: U32, t: F32, e0: F32, age: U32, wipe: Bool}
+  Run{id: U32, seed: U32, t: D.F64, e0: D.F64, age: U32, wipe: Bool}
 
 type Opt is Data:
   Opt{paused: Bool, lines: Bool, tour: Bool, speed: F32}
@@ -666,11 +743,11 @@ def World.load(+id: U32, w: World) -> World:
   Run{_, seed, _, _, _, _} = run
   +next = Scn.rand((seed + 2654435761 : U32))
   +s = Sys.center(Scn.sys(id, next))
-  World{s, Past{s, s}, Run{id, next, 0.0, Sys.energy(s), 0, True{}}, opt, clk}
+  World{s, Past{s, s}, Run{id, next, Dbl.zero(), Sys.energy(s), 0, True{}}, opt, clk}
 
 def World.init(+now: Nat) -> World:
   +s = Sys.center(Scn.sys(0, 0))
-  World.load(0, World{s, Past{s, s}, Run{0, U32.from_nat(now), 0.0, 0.0, 0, True{}},
+  World.load(0, World{s, Past{s, s}, Run{0, U32.from_nat(now), Dbl.zero(), Dbl.zero(), 0, True{}},
     Opt{False{}, True{}, True{}, 1.0}, Clk{now, 0, 0, now, 0}})
 
 # The scenario after this one.
@@ -719,7 +796,7 @@ def World.fate(lost: Bool, late: Bool, flung: Bool, +w: World) -> World:
 
 # The world after the frame's run: the time it got to, its age, the
 # trail ticks that passed, and its fate.
-def World.land(ran: Ran, mid: Sys, +dt: F32, +ms: U32, +now: Nat, +w: World) -> World:
+def World.land(ran: Ran, mid: Sys, +dt: D.F64, +ms: U32, +now: Nat, +w: World) -> World:
   Ran{+s, left} = ran
   World{sys, _, run, opt, clk} = w
   Run{id, seed, t, e0, age, wipe} = run
@@ -728,15 +805,15 @@ def World.land(ran: Ran, mid: Sys, +dt: F32, +ms: U32, +now: Nat, +w: World) -> 
   +old = (age + ms : U32)
   +c = (clock + ms : U32)
   World.fate(Bool.not(Sys.sane(s)), tour && (old > Scn.show(id) * 1000 : U32),
-    tour && Sys.gone(s, Scn.zoom(id)), World{s, Past{mid, sys}, Run{id, seed, (t + dt - left : F32), e0, old, wipe}, opt,
+    tour && Sys.gone(s, Dbl.of_f32(Scn.zoom(id))), World{s, Past{mid, sys}, Run{id, seed, D.sub(D.add(t, dt), left), e0, old, wipe}, opt,
       Clk{now, c, (Clk.tick(c) - Clk.tick(clock) : U32), begin, (frames + 1 : U32)}})
 
 # The second half of the frame's run, from where the first got to and
 # with the time it left; the bodies in between give the trail a bend.
-def World.half(ran: Ran, half: F32, +dt: F32, +ms: U32, +now: Nat, +w: World) -> World:
+def World.half(ran: Ran, half: D.F64, +dt: D.F64, +ms: U32, +now: Nat, +w: World) -> World:
   Ran{+mid, left} = ran
-  +due = (half + left : F32)
-  World.land(Sys.run(2048n, (due <= 0.0 : F32), due, mid), mid, dt, ms, now, w)
+  +due = D.add(half, left)
+  World.land(Sys.run(2048n, D.le(due, Dbl.zero()), due, mid), mid, dt, ms, now, w)
 
 # A frame of the world: paused, only the clocks move; else the bodies
 # run for the time since the last frame (50 ms at most) at the
@@ -751,9 +828,9 @@ def World.turn(paused: Bool, +ms: U32, +now: Nat, +w: World) -> World:
       World{sys, _, run, opt, _} = w
       Run{id, _, _, _, _, _} = run
       Opt{_, _, _, speed} = opt
-      +dt = (U32.to_f32(ms) * 0.001 * Scn.rate(id) * speed : F32)
-      +half = (0.5 * dt : F32)
-      World.half(Sys.run(2048n, (half <= 0.0 : F32), half, sys), half, dt, ms, now, w)
+      +dt = Dbl.of_f32((U32.to_f32(ms) * 0.001 * Scn.rate(id) * speed : F32))
+      +half = D.mul(Dbl.half(), dt)
+      World.half(Sys.run(2048n, D.le(half, Dbl.zero()), half, sys), half, dt, ms, now, w)
 
 def World.tick(+now: Nat, +w: World) -> World:
   World{_, _, _, opt, clk} = w
@@ -766,13 +843,14 @@ def World.tick(+now: Nat, +w: World) -> World:
 # the centre of mass at the centre of the frame, y up, the radius by
 # the cube root of the mass (11 px for the heaviest).
 def Body.star(p: Body, h: Body, o: Body, +zoom: F32, big: F32) -> Star:
-  Body{x, y, _, _, +m} = p
+  Body{x, y, _, _, m} = p
   Body{hx, hy, _, _, _} = h
   Body{ox, oy, _, _, _} = o
-  Star{(640.0 + zoom * Two.val(x) : F32), (360.0 - zoom * Two.val(y) : F32),
-    (640.0 + zoom * Two.val(hx) : F32), (360.0 - zoom * Two.val(hy) : F32),
-    (640.0 + zoom * Two.val(ox) : F32), (360.0 - zoom * Two.val(oy) : F32),
-    max(2.2, (11.0 * F32.pow((m / big : F32), 0.33333334) : F32)), m}
+  +mf = Dbl.to_f32(m)
+  Star{(640.0 + zoom * Dbl.to_f32(x) : F32), (360.0 - zoom * Dbl.to_f32(y) : F32),
+    (640.0 + zoom * Dbl.to_f32(hx) : F32), (360.0 - zoom * Dbl.to_f32(hy) : F32),
+    (640.0 + zoom * Dbl.to_f32(ox) : F32), (360.0 - zoom * Dbl.to_f32(oy) : F32),
+    max(2.2, (11.0 * F32.pow((mf / big : F32), 0.33333334) : F32)), mf}
 
 def Bit.of(b: Bool, v: U32) -> U32:
   word(b, v, 0)
@@ -791,7 +869,7 @@ def World.view(+w: World) -> Uni:
   Opt{_, lines, _, _} = opt
   Clk{stamp, clock, fade, _, _} = clk
   +zoom = Scn.zoom(id)
-  +big = max(ma, max(mb, mc))
+  +big = max(Dbl.to_f32(ma), max(Dbl.to_f32(mb), Dbl.to_f32(mc)))
   Uni{Body.star(a, ha, oa, zoom, big), Body.star(b, hb, ob, zoom, big), Body.star(c, hc, oc, zoom, big),
     (U32.to_f32((U32.from_nat(stamp) .&. 1048575 : U32)) * 0.001 : F32), (Clk.tick(clock) .&. 63 : U32), fade,
     (Bit.of(wipe, 1) .|. Bit.of(lines, 2) : U32)}
@@ -914,8 +992,8 @@ def World.title(w: World, fps: U32) -> String:
   Run{+id, _, t, +e0, _, _} = run
   Opt{paused, _, tour, speed} = opt
   "3 Bodies | " ++ U32.show((id + 1 : U32)) ++ "/10 " ++ Scn.name(id) ++ " | " ++ U32.show(fps)
-    ++ " FPS | t = " ++ Fix.show(t) ++ " | dE/E = "
-    ++ U32.show(F32.to_u32((1000000.0 * F32.abs(((Sys.energy(sys) - e0) / e0 : F32)) + 0.5 : F32)))
+    ++ " FPS | t = " ++ Fix.show(Dbl.to_f32(t)) ++ " | dE/E = "
+    ++ U32.show(F32.to_u32((1000000.0 * F32.abs(Dbl.to_f32(D.div(D.sub(Sys.energy(sys), e0), e0))) + 0.5 : F32)))
     ++ " ppm | x" ++ Fix.show(speed) ++ Tag.of(tour, " | tour") ++ Tag.of(paused, " | PAUSED")
 
 # Loop

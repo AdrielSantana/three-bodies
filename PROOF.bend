@@ -4,6 +4,7 @@
 import Base
 import ./main.bend as App
 import ./LAWS.bend as Laws
+import ./vendor/bend-collections/f64.bend as D
 
 def Laws.esc_quits(rest, w):
   {==}
@@ -56,11 +57,11 @@ def Laws.run_keeps_mass(fuel, done, left, s):
         case True{}:
           {==}
         case False{}:
-          +h = App.min(left, (0.02 * App.Sys.pace(s) : F32))
-          +rest = (left - h : F32)
-          %Laws.step_keeps_mass(s, h) : {Laws.Mass.ran(App.Sys.run(f, (rest <= 0.0 : F32), rest, App.Sys.step(s, h)))
-            == _ : F32 & F32 & F32}
-          Laws.run_keeps_mass(f, (rest <= 0.0 : F32), rest, App.Sys.step(s, h))
+          +h = App.Dbl.min(left, D.mul(D.of_bits(1066695393, 1202590843), App.Sys.pace(s)))
+          +rest = D.sub(left, h)
+          %Laws.step_keeps_mass(s, h) : {Laws.Mass.ran(App.Sys.run(f, D.le(rest, App.Dbl.zero()), rest, App.Sys.step(s, h)))
+            == _ : D.F64 & D.F64 & D.F64}
+          Laws.run_keeps_mass(f, D.le(rest, App.Dbl.zero()), rest, App.Sys.step(s, h))
 
 # The quits, in general: whatever the frame's events have made of the
 # world so far (or if they have already ended it), the events from there
@@ -266,3 +267,7 @@ def Laws.t_twice(w):
               {==}
             case False{}:
               {==}
+
+# Where the scenarios start: the checker computes all nine.
+def Laws.starts_at_rest():
+  {==}

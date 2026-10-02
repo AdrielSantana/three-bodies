@@ -10,7 +10,7 @@ O problema gravitacional dos três corpos, ao vivo, escrito em [Bend](https://be
 
 ## Como rodar
 
-Instale o Bend 2 e compile o binário nativo:
+Instale o Bend (2.0.34 ou mais novo) e compile o binário nativo:
 
 ```bash
 curl -fsSL https://bend-lang.com/install.sh | sh
@@ -32,7 +32,7 @@ A GPU é usada por padrão. Para comparar com a CPU:
 ./tres --threads 8     # escolhe o número de threads da CPU
 ```
 
-Testado em um Apple M5 com Bend 2.0.25: 60 FPS em 1280 × 720.
+Testado em um Apple M5 com Bend 2.0.34: 60 FPS em 1280 × 720.
 
 ## Controles
 
@@ -73,7 +73,8 @@ O título da janela e os nomes dos cenários dentro do app estão em inglês.
 ### Física
 
 - Três massas pontuais sob a lei de Newton, com G = 1 e praticamente sem suavização (1e-6 de uma unidade de comprimento).
-- Posições e velocidades em *double-single*: um `F32` e o erro de arredondamento que ele deixou, somados com o TwoSum de Knuth.
+- Todos os números da física são *doubles* IEEE-754 calculados em software, pelo `f64.bend` do [Giulio2002/bend-collections](https://github.com/Giulio2002/bend-collections) (veja [Créditos](#créditos)). Como esses *doubles* são código Bend comum, o verificador de provas também consegue calculá-los, e é isso que torna o `PHYSICS.bend` possível.
+- A física nunca divide nem tira raiz quadrada: `1/√x` sai de quatro passos de Newton a partir de um palpite inicial lido dos bits.
 - Integrador simplético de 4ª ordem de Forest-Ruth, uma composição de três leapfrogs.
 - Passo adaptativo: 2% do tempo de queda livre ou de passagem do par mais próximo, para resolver um estilingue gravitacional em vez de pular por cima dele.
 - O título da janela mostra a deriva da energia total em partes por milhão.
@@ -86,13 +87,11 @@ O título da janela e os nomes dos cenários dentro do app estão em inglês.
 
 ## Leis e provas
 
-`LAWS.bend` diz o que o programa tem que fazer, e `PROOF.bend` prova. O verificador do Bend confere cada lei para todas as entradas possíveis, e não para uma amostra, como um teste faria:
+`LAWS.bend` diz o que o programa tem que fazer, e `PROOF.bend` prova. O verificador do Bend confere cada lei para todas as entradas possíveis, e não para uma amostra, como um teste faria. A verificação leva cerca de um minuto:
 
 ```bash
 bend PROOF.bend --check-only
 ```
-
-As provas passam no Bend 2.0.25 e no 2.0.34.
 
 ### Do one-shot
 
@@ -109,6 +108,7 @@ As provas passam no Bend 2.0.25 e no 2.0.34.
 | --- | --- |
 | `step_keeps_mass` | Um passo do integrador nunca muda uma massa, quaisquer que sejam os corpos e o tamanho do passo. |
 | `run_keeps_mass` | Nem uma simulação inteira, com quantos passos for (por indução). |
+| `starts_at_rest` | Cada um dos nove cenários fixos começa com o centro de massa na origem e momento zero, até 1e-15. |
 | `esc_anywhere` | Esc encerra em qualquer ponto dos eventos de um quadro, não importa o que veio antes. |
 | `close_anywhere` | Fechar a janela também. |
 | `digits_pick` | As teclas 1–9 escolhem os cenários 1–9, e o 0 escolhe o 10º, a partir de qualquer estado. |
@@ -123,13 +123,30 @@ As provas passam no Bend 2.0.25 e no 2.0.34.
 
 Cada lei nova também foi testada contra bugs injetados de propósito, como deixar o integrador mexer numa massa, fazer o N pular um cenário ou fazer o R ir para o próximo. Todos os bugs fizeram a verificação falhar.
 
-### O que não está provado, e por quê
+A física também foi trocada depois, de `F32` para *doubles* em software. O verificador do Bend trata as contas com `F32` como caixas-pretas (não consegue provar nem `1.5 + 2.25 == 3.75` em `F32`), então com `F32` nada sobre as órbitas podia ser provado.
 
-A física. O verificador do Bend trata as contas com `F32` como caixas-pretas: não consegue provar nem `1.5 + 2.25 == 3.75` em `F32`. Todas as posições, velocidades e energias deste programa são `F32`, então nenhuma lei sobre órbitas, energia ou momento pode ser provada no Bend hoje. E em ponto flutuante energia e momento não se conservam exatamente, só de forma aproximada.
+### A física: `PHYSICS.bend`
 
-No lugar de prova, o programa oferece uma medição: o título da janela mostra, ao vivo, quanto a energia total se desviou do valor inicial, em partes por milhão.
+O `PHYSICS.bend` prova um teorema sobre o próprio integrador do app, começando de onde o app começa a figura-8 e rodando por um terço do período (352 passos). Ele afirma quatro coisas:
 
-Também ficam de fora a imagem calculada na GPU e o código de janela e teclado que conversa com o sistema operacional, que as provas do Bend não alcançam.
+1. O integrador percorre todo esse tempo dentro do seu limite de passos.
+2. Cada corpo termina onde o seguinte começou, com a velocidade com que ele começou, com erro menor que 1e-7. Os três corpos se perseguem ao longo de uma única curva: essa é a propriedade que define a figura-8, e só a lei de Newton a produz.
+3. A energia total fica a menos de uma parte em 10⁹ do valor inicial.
+4. O momento total, zero no início, fica abaixo de 1e-13.
+
+A prova não usa táticas nem aproximações: o próprio verificador roda os 352 passos, com os mesmos *doubles* em software que o app usa, e lê as quatro respostas. Isso leva cerca de três horas:
+
+```bash
+bend PHYSICS.bend --check-only
+```
+
+**Status:** a primeira verificação completa começou em 2 de outubro de 2026 e ainda está rodando. Esta seção vai ser atualizada com o resultado.
+
+### O que não está provado
+
+- **Outras condições iniciais.** O teorema é sobre a figura-8 e esse intervalo de tempo. Uma lei para quaisquer condições iniciais ("para quaisquer corpos, a energia varia menos que X") exigiria uma análise formal dos erros de arredondamento, o que ainda está fora de alcance aqui.
+- **Os quadros que o app mostra.** O app roda o mesmo integrador, mas em pedaços de um quadro cada; o teorema roda tudo de uma vez.
+- **A imagem e o sistema operacional.** A imagem calculada na GPU continua em `F32` e não tem provas. O código de janela e teclado que conversa com o sistema operacional está fora do alcance das provas do Bend.
 
 ## Arquivos
 
@@ -138,6 +155,12 @@ Também ficam de fora a imagem calculada na GPU e o código de janela e teclado 
 | `main.bend` | A simulação: física, cenários, pixels, teclado e laço principal |
 | `LAWS.bend` | As leis: o que o programa tem que fazer |
 | `PROOF.bend` | As provas |
+| `PHYSICS.bend` | O teorema da figura-8, com a prova |
+| `vendor/bend-collections/` | Os *doubles* em software, do Giulio2002/bend-collections |
+
+## Créditos
+
+Os *doubles* em software de `vendor/bend-collections/` são do [Giulio2002](https://github.com/Giulio2002), do projeto [bend-collections](https://github.com/Giulio2002/bend-collections) (MIT). O binary64 IEEE-754 dele, escrito em Bend puro e provado com arredondamento correto, é o que permite ao verificador calcular a física, e portanto o que torna o `PHYSICS.bend` possível.
 
 ## Licença
 
